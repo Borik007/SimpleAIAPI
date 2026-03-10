@@ -22,4 +22,4 @@ jobs:
         # Using a static 'latest' tag for testing, or a timestamp for unique versioning
         docker build . \
           --file Dockerfile \
-          --tag SimpleAIAPI:latest
+          --tag simpleaiapi:latest
