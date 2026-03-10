@@ -1,0 +1,11 @@
+@SimpleAIAPI_HostAddress = http://localhost:5059
+
+GET {{SimpleAIAPI_HostAddress}}/todos/
+Accept: application/json
+
+###
+
+GET {{SimpleAIAPI_HostAddress}}/todos/1
+Accept: application/json
+
+###
