@@ -8,19 +8,19 @@ public interface IOllamaService
     Task<string> ChatAsync(string model, List<OllamaMessage> messages);
 }
 
-public class OllamaService(HttpClient httpClient, IConfiguration configuration) : IOllamaService
+public class OllamaService(HttpClient httpClient) : IOllamaService
 {
     public async Task<string> ChatAsync(string model, List<OllamaMessage> messages)
     {
-        var ollamaIp = configuration["OLLAMA_IP"] ?? "localhost:11434";
-        var url = $"http://{ollamaIp}/api/chat";
+        const string url = "api/chat";
 
         var requestBody = new OllamaChatRequest(model, messages, false);
         var response = await httpClient.PostAsJsonAsync(url, requestBody, OllamaJsonSerializerContext.Default.OllamaChatRequest);
 
         if (!response.IsSuccessStatusCode)
         {
-            return $"Error: {response.StatusCode}";
+            var errorContent = await response.Content.ReadAsStringAsync();
+            return $"Error: {response.StatusCode} - {errorContent}";
         }
 
         var result = await response.Content.ReadFromJsonAsync(OllamaJsonSerializerContext.Default.OllamaChatResponse);

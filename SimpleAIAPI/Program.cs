@@ -6,7 +6,6 @@ using SimpleAIAPI.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Ensure the OLLAMA_IP is read from environment or config
 var ollamaIp = builder.Configuration["OLLAMA_IP"] ?? "ollama:11434";
 
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -17,7 +16,11 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 builder.Services.AddDbContext<AIDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
-builder.Services.AddHttpClient<IOllamaService, OllamaService>();
+builder.Services.AddHttpClient<IOllamaService, OllamaService>(client =>
+{
+    client.BaseAddress = new Uri($"http://{ollamaIp}/");
+    client.Timeout = TimeSpan.FromSeconds(100); 
+});
 
 var app = builder.Build();
 
@@ -26,18 +29,26 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AIDbContext>();
     db.Database.EnsureCreated();
-    var server = await db.AIServers.FindAsync(ollamaIp);
-    if (server == null)
+    
+    var serverExists = await db.AIServers.AnyAsync(s => s.AI_IP == ollamaIp);
+    if (!serverExists)
     {
         db.AIServers.Add(new AIServer { AI_IP = ollamaIp });
-        await db.SaveChangesAsync();
+        try 
+        {
+            await db.SaveChangesAsync();
+        }
+        catch (DbUpdateException)
+        {
+            
+        }
     }
 }
 
 var api = app.MapGroup("/api");
 
-// /api/newchat -> blank response: userID
-api.MapGet("/newchat", async (AIDbContext db, HttpContext context) =>
+// /api/newchat -> returns userID
+api.MapPost("/newchat", async (AIDbContext db, HttpContext context) =>
 {
     var clientId = Guid.NewGuid();
     var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -53,24 +64,50 @@ api.MapGet("/newchat", async (AIDbContext db, HttpContext context) =>
     db.Clients.Add(client);
     await db.SaveChangesAsync();
 
-    return Results.Ok(clientId.ToString());
+    return Results.Content(clientId.ToString(), "text/plain");
 });
 
-// /api/model/{userID}:{model} -> response: http code ok
-api.MapGet("/model/{userID}:{model}", async (Guid userID, string model, AIDbContext db) =>
+// /api/model -> response: http code ok
+api.MapPut("/model", async (HttpContext context, AIDbContext db) =>
 {
+    
+    using var reader = new StreamReader(context.Request.Body);
+    var body = await reader.ReadToEndAsync();
+    
+    var parts = body.Split(':', 2);
+    if (parts.Length < 2)
+        return Results.BadRequest("Invalid format. Use userID:message");
+    
+    if (!Guid.TryParse(parts[0].Trim(), out var userID))
+        return Results.BadRequest("Invalid userID format");
+    
+    var model = parts[1].Trim();
     var client = await db.Clients.FindAsync(userID);
     if (client == null) return Results.NotFound("Client not found");
 
     client.Model = model;
     await db.SaveChangesAsync();
 
-    return Results.Ok();
+    return Results.Content("OK", "text/plain");
 });
 
-// /api/message/{userID}:{message} -> response: message
-api.MapGet("/message/{userID}:{message}", async (Guid userID, string message, AIDbContext db, IOllamaService ollama) =>
+// /api/message -> body: userID:message -> response: message
+api.MapPost("/message", async (HttpContext context, AIDbContext db, IOllamaService ollama) =>
 {
+    using var reader = new StreamReader(context.Request.Body);
+    var body = await reader.ReadToEndAsync();
+    
+    var parts = body.Split(':', 2);
+    if (parts.Length < 2)
+        return Results.BadRequest("Invalid format. Use userID:message");
+    
+    if (!Guid.TryParse(parts[0].Trim(), out var userID))
+        return Results.BadRequest("Invalid userID format");
+
+    var message = parts[1].Trim();
+    if (string.IsNullOrWhiteSpace(message))
+        return Results.BadRequest("Message cannot be empty");
+
     var client = await db.Clients
         .Include(c => c.Messages)
         .FirstOrDefaultAsync(c => c.ClientID == userID);
@@ -88,8 +125,10 @@ api.MapGet("/message/{userID}:{message}", async (Guid userID, string message, AI
     db.Messages.Add(userMsg);
     await db.SaveChangesAsync();
 
-    // Prepare messages for Ollama
+    // Prepare messages for Ollama (limit history to last 10 messages for efficiency)
     var ollamaMessages = client.Messages
+        .OrderByDescending(m => m.Timestamp)
+        .Take(11) // User's new message + last 10
         .OrderBy(m => m.Timestamp)
         .Select(m => new OllamaMessage(m.Role, m.Message))
         .ToList();
@@ -108,7 +147,7 @@ api.MapGet("/message/{userID}:{message}", async (Guid userID, string message, AI
     db.Messages.Add(assistantMsg);
     await db.SaveChangesAsync();
 
-    return Results.Ok(responseMessage);
+    return Results.Content(responseMessage, "text/plain");
 });
 
 app.Run();
