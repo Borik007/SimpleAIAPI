@@ -26,8 +26,8 @@ jobs:
       run: |
         docker build . \
           --file SimpleAIAPI/Dockerfile \
-          --tag ghcr.io/${{ github.repository }}/simpleaiapi:latest
+          --tag ghcr.io/borik007/simpleaiapi:latest
 
     - name: Push Docker Image
       run: |
-        docker push ghcr.io/${{ github.repository }}/simpleaiapi:latest
+        docker push ghcr.io/borik007/simpleaiapi:latest
