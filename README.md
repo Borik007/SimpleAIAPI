@@ -13,4 +13,5 @@ PUT /api/model        client message - raw text - clientID(guid):model       (th
 
 The software saves data into postgredatabase
 
-example docker compose(included on git in the project root folder)
+example docker compose(included on git in the project root folder)  - usethis-compsoe.yml
+it is only example how to deploy that project with its depedencies - db and ollama
