@@ -7,6 +7,7 @@ services:
       context: .
       dockerfile: SimpleAIAPI/Dockerfile
     environment:
+      - CHAT_HISTORY_SIZE=10
       - CACHE_SIZE=10
       - OLLAMA_IP=ollama:11434
       - ConnectionStrings__DefaultConnection=Host=db;Database=ai_db;Username=postgres;Password=postgres
