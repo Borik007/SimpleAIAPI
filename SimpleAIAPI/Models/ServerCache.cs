@@ -13,7 +13,7 @@ public class ServerCache : AIServer
         CacheSize = cacheSize;
     }
     
-    public async Task<string> SaveClient(Client client, AIDbContext db)
+    public async Task SaveClient(Client client, AIDbContext db)
     {
         await _cacheLock.WaitAsync();
         try
@@ -35,7 +35,6 @@ public class ServerCache : AIServer
         }
         catch (Exception e)
         {
-            _cacheLock.Release();
             Console.WriteLine(e);
             throw;
         }
@@ -43,8 +42,6 @@ public class ServerCache : AIServer
         {
             _cacheLock.Release();
         }
-        await Task.Delay(1000);
-        return "Client saved successfully";
     }
 
     public async Task<Client> GetClient(Guid id, AIDbContext db)
@@ -65,37 +62,38 @@ public class ServerCache : AIServer
             _cacheLock.Release();
         }
         if (client != null) return client;
-        else
+        
+        client = await db.Clients
+            .Include(c => c.Messages
+                .OrderByDescending(m => m.Timestamp)
+                .Take(10).OrderBy(m => m.Timestamp)) 
+            .FirstOrDefaultAsync(c => c.ClientID == id);
+        
+        if (client == null) return null;
+
+        await _cacheLock.WaitAsync();
+        try
         {
-            client = await db.Clients
-                .Include(c => c.Messages
-                    .OrderByDescending(m => m.Timestamp)
-                    .Take(10).OrderBy(m => m.Timestamp)) 
-                .FirstOrDefaultAsync(c => c.ClientID == id);
-            
-            if (client == null) return null;
+            // Check again inside the lock
+            var alreadyCached = Clients.FirstOrDefault(c => c.ClientID == id);
+            if (alreadyCached != null) return alreadyCached;
 
-            await _cacheLock.WaitAsync();
-            try
+            if (Clients.Count >= CacheSize)
             {
-                if (Clients.Count >= CacheSize)
-                {
-                    Clients.RemoveAt(0);
-                }
-                Clients.Add(client);
-
-                _cacheLock.Release();
+                Clients.RemoveAt(0);
             }
-            catch (Exception e)
-            {
-                _cacheLock.Release();
-                Console.WriteLine(e);
-                throw;
-                
-            }
-            return client;
-            
+            Clients.Add(client);
         }
+        catch (Exception e)
+        {
+            Console.WriteLine(e);
+            throw;
+        }
+        finally
+        {
+            _cacheLock.Release();
+        }
+        return client;
     }
     
 }

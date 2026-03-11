@@ -101,7 +101,7 @@ api.MapPut("/model", async (HttpContext context, AIDbContext db) =>
 });
 
 // /api/message -> body: userID:message -> response: message
-api.MapPost("/message", async (HttpContext context, AIDbContext db, IOllamaService ollama) =>
+api.MapPost("/message", async (HttpContext context, AIDbContext db, IOllamaService ollama, IServiceScopeFactory scopeFactory) =>
 {
     using var reader = new StreamReader(context.Request.Body);
     var body = await reader.ReadToEndAsync();
@@ -135,7 +135,7 @@ api.MapPost("/message", async (HttpContext context, AIDbContext db, IOllamaServi
     // Prepare messages for Ollama (limit history to last 10 messages for efficiency)
     var ollamaMessages = client.Messages
         .OrderByDescending(m => m.Timestamp)
-        .Take(11) // User's new message + last 10
+        .Take(10) // Take last 10 messages total
         .OrderBy(m => m.Timestamp)
         .Select(m => new OllamaMessage(m.Role, m.Message))
         .ToList();
@@ -153,8 +153,20 @@ api.MapPost("/message", async (HttpContext context, AIDbContext db, IOllamaServi
     };
     client.Messages.Add(assistantMsg);
     
-    //avoid waiting for the save to complete
-    cachedServer.SaveClient(client, db).FireAndForget();
+    // Save assistant response in the background using a new scope
+    _ = Task.Run(async () =>
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var backgroundDb = scope.ServiceProvider.GetRequiredService<AIDbContext>();
+            await cachedServer.SaveClient(client, backgroundDb);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error saving assistant message: {ex.Message}");
+        }
+    });
     
     return Results.Content(responseMessage, "text/plain");
 });
