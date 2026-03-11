@@ -7,7 +7,7 @@ public class AIServer
 {
     [Key]
     public string AI_IP { get; set; } = string.Empty;
-    public List<Client> Clients { get; set; } = new();
+    public virtual List<Client> Clients { get; set; } = new();
 }
 
 public class Client

@@ -9,6 +9,7 @@
     environment:
       # Use the service name 'ollama' instead of 127.0.0.1
       - OLLAMA_IP=ollama:11434
+      - CACHE_SIZE=10
       - ConnectionStrings__DefaultConnection=Host=db;Database=ai_db;Username=postgres;Password=postgres
     depends_on:
       - db

@@ -1,12 +1,18 @@
-using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using SimpleAIAPI.Data;
 using SimpleAIAPI.Models;
 using SimpleAIAPI.Services;
+using SimpleAIAPI.Helpers;
+
+
+ServerCache cachedServer;
 
 var builder = WebApplication.CreateBuilder(args);
 
 var ollamaIp = builder.Configuration["OLLAMA_IP"] ?? "ollama:11434";
+var cacheSize = int.Parse(builder.Configuration["CACHE_SIZE"] ?? "10");
+
+cachedServer = new ServerCache(ollamaIp, cacheSize);
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -21,6 +27,7 @@ builder.Services.AddHttpClient<IOllamaService, OllamaService>(client =>
     client.BaseAddress = new Uri($"http://{ollamaIp}/");
     client.Timeout = TimeSpan.FromSeconds(100); 
 });
+
 
 var app = builder.Build();
 
@@ -63,6 +70,8 @@ api.MapPost("/newchat", async (AIDbContext db, HttpContext context) =>
 
     db.Clients.Add(client);
     await db.SaveChangesAsync();
+    
+    await cachedServer.SaveClient(client, db);
 
     return Results.Content(clientId.ToString(), "text/plain");
 });
@@ -78,15 +87,15 @@ api.MapPut("/model", async (HttpContext context, AIDbContext db) =>
     if (parts.Length < 2)
         return Results.BadRequest("Invalid format. Use userID:message");
     
-    if (!Guid.TryParse(parts[0].Trim(), out var userID))
+    if (!Guid.TryParse(parts[0].Trim(), out var userId))
         return Results.BadRequest("Invalid userID format");
     
     var model = parts[1].Trim();
-    var client = await db.Clients.FindAsync(userID);
+    var client = await cachedServer.GetClient(userId, db);
     if (client == null) return Results.NotFound("Client not found");
 
     client.Model = model;
-    await db.SaveChangesAsync();
+    await cachedServer.SaveClient(client, db);
 
     return Results.Content("OK", "text/plain");
 });
@@ -101,16 +110,14 @@ api.MapPost("/message", async (HttpContext context, AIDbContext db, IOllamaServi
     if (parts.Length < 2)
         return Results.BadRequest("Invalid format. Use userID:message");
     
-    if (!Guid.TryParse(parts[0].Trim(), out var userID))
+    if (!Guid.TryParse(parts[0].Trim(), out var userId))
         return Results.BadRequest("Invalid userID format");
 
     var message = parts[1].Trim();
     if (string.IsNullOrWhiteSpace(message))
         return Results.BadRequest("Message cannot be empty");
 
-    var client = await db.Clients
-        .Include(c => c.Messages)
-        .FirstOrDefaultAsync(c => c.ClientID == userID);
+    var client = await cachedServer.GetClient(userId, db);
 
     if (client == null) return Results.NotFound("Client not found");
 
@@ -119,11 +126,11 @@ api.MapPost("/message", async (HttpContext context, AIDbContext db, IOllamaServi
     { 
         Role = "user", 
         Message = message, 
-        ClientID = userID,
+        ClientID = userId,
         Timestamp = DateTime.UtcNow 
     };
-    db.Messages.Add(userMsg);
-    await db.SaveChangesAsync();
+    client.Messages.Add(userMsg);
+    await cachedServer.SaveClient(client, db);
 
     // Prepare messages for Ollama (limit history to last 10 messages for efficiency)
     var ollamaMessages = client.Messages
@@ -141,12 +148,14 @@ api.MapPost("/message", async (HttpContext context, AIDbContext db, IOllamaServi
     { 
         Role = "assistant", 
         Message = responseMessage, 
-        ClientID = userID,
+        ClientID = userId,
         Timestamp = DateTime.UtcNow 
     };
-    db.Messages.Add(assistantMsg);
-    await db.SaveChangesAsync();
-
+    client.Messages.Add(assistantMsg);
+    
+    //avoid waiting for the save to complete
+    cachedServer.SaveClient(client, db).FireAndForget();
+    
     return Results.Content(responseMessage, "text/plain");
 });
 
