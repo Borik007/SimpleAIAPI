@@ -11,8 +11,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 var ollamaIp = builder.Configuration["OLLAMA_IP"] ?? "ollama:11434";
 var cacheSize = int.Parse(builder.Configuration["CACHE_SIZE"] ?? "10");
+var chatHistorySize = int.Parse(builder.Configuration["CHAT_HISTORY_SIZE"] ?? "10");
 
-cachedServer = new ServerCache(ollamaIp, cacheSize);
+cachedServer = new ServerCache(ollamaIp, cacheSize, chatHistorySize);
+
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -135,7 +137,7 @@ api.MapPost("/message", async (HttpContext context, AIDbContext db, IOllamaServi
     // Prepare messages for Ollama (limit history to last 10 messages for efficiency)
     var ollamaMessages = client.Messages
         .OrderByDescending(m => m.Timestamp)
-        .Take(10) // Take last 10 messages total
+        .Take(chatHistorySize) // Take last 10 messages total
         .OrderBy(m => m.Timestamp)
         .Select(m => new OllamaMessage(m.Role, m.Message))
         .ToList();

@@ -6,11 +6,13 @@ public class ServerCache : AIServer
 {
     private SemaphoreSlim _cacheLock = new(1, 1);
     public int CacheSize { get; set; } = 10;
+    public int ChatHistorySize { get; set; } = 10;
     
-    public ServerCache(string aiIp, int cacheSize)
+    public ServerCache(string aiIp, int cacheSize, int chatHistorySize)
     {
         AI_IP = aiIp;
         CacheSize = cacheSize;
+        ChatHistorySize = chatHistorySize;
     }
     
     public async Task SaveClient(Client client, AIDbContext db)
@@ -66,7 +68,7 @@ public class ServerCache : AIServer
         client = await db.Clients
             .Include(c => c.Messages
                 .OrderByDescending(m => m.Timestamp)
-                .Take(10).OrderBy(m => m.Timestamp)) 
+                .Take(ChatHistorySize).OrderBy(m => m.Timestamp)) 
             .FirstOrDefaultAsync(c => c.ClientID == id);
         
         if (client == null) return null;
