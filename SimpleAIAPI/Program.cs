@@ -27,7 +27,8 @@ builder.Services.AddDbContext<AIDbContext>(options =>
 builder.Services.AddHttpClient<IOllamaService, OllamaService>(client =>
 {
     client.BaseAddress = new Uri($"http://{ollamaIp}/");
-    client.Timeout = TimeSpan.FromSeconds(100); 
+    //veru high timeout, gnerating answer may tkae a while
+    client.Timeout = TimeSpan.FromSeconds(1000); 
 });
 
 
@@ -70,9 +71,6 @@ api.MapPost("/newchat", async (AIDbContext db, HttpContext context) =>
         Model = "llama3"
     };
 
-    db.Clients.Add(client);
-    await db.SaveChangesAsync();
-    
     await cachedServer.SaveClient(client, db);
 
     return Results.Content(clientId.ToString(), "text/plain");
@@ -156,21 +154,11 @@ api.MapPost("/message", async (HttpContext context, AIDbContext db, IOllamaServi
     client.Messages.Add(assistantMsg);
     
     // Save assistant response in the background using a new scope
-    _ = Task.Run(async () =>
-    {
-        try
-        {
-            using var scope = scopeFactory.CreateScope();
-            var backgroundDb = scope.ServiceProvider.GetRequiredService<AIDbContext>();
-            await cachedServer.SaveClient(client, backgroundDb);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error saving assistant message: {ex.Message}");
-        }
-    });
+
+    await cachedServer.SaveClient(client, db);
     
     return Results.Content(responseMessage, "text/plain");
 });
 
 app.Run();
+
